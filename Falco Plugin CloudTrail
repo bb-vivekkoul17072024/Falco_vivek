@@ -1,0 +1,8 @@
+Here we will be editing the same values.yaml file that we used for k8s-audit Plugin to setup the cloudtrail plugin.
+Now the cloudtrail plugin will also run as deployment through k8s-audit pods.\
+Firstly ensure you have added the cloudtrail plugins in the yaml file.
+Here is the helm command below to use the updated yaml file and update k8s-audit pods respectively.
+command:
+helm upgrade  falco-k8saudit-eks -n falco falcosecurity/falco 
+--set falcosidekick.config.slack.webhookurl="https://hooks.slack.com-url" -f ./yamlfile
+
