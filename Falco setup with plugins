@@ -14,24 +14,6 @@ helm install falco -n falco falcosecurity/falco \
 Find the webhook link on slack:-Create channel->Create app->integration->Search incoming webhook->set the channel name->generate the webhook link and save it for
 future use.
 
-Now to setup plugins for falco:
-Plugin1:K8s audit:The k8saudit-eks plugin in Falco is used to monitor Kubernetes audit logs in an Amazon EKS cluster. Since EKS control plane logs are not directly
-accessible, Falco integrates with CloudWatch, where these audit logs are forwarded. The plugin retrieves logs from CloudWatch and processes Kubernetes API events
-— such as pod creation, secret access, or ConfigMap changes — to detect suspicious activity based on Falco rules.
-Steps:-
-Create a yaml file that contains the configuration for the setup of the k8s-audit-plugin you will find it in the offical website of falco also.
-Provide necessary Roles to your cluster if the setup is on eks.
-After all this execte this command below.
-command:
--> helm install falco-k8saudit-eks -n falco falcosecurity/falco -f ./filename.yaml
-After this u will receive the updates on your terminal,Now there will be individual pods of the falco-k8s-audit and they will run as deployment as they will get
-the logs from the cloudwatch.
-Now to recive these alerts on slack also upgrade your helm chart by running the command below:
-command:
-helm upgrade  falco-k8saudit-eks -n falco falcosecurity/falco
-  --set falcosidekick.config.slack.webhookurl="samewebhookurl_link" -f ./filename.yaml
-make sure that the webhook url is same to receive all the alerts on same channel and set filename as same also that was used to install k8s audit.
-After this your k8s audit setup will be done successfully.
 
 
 
