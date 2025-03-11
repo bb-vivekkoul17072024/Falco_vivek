@@ -1,0 +1,130 @@
+- macro: user_sensitive_mount_containers
+  condition: (never_true)
+
+- list: namespace_scope_network_only_subnet
+  items: []
+
+- list: falco_privileged_images
+  items: [
+    falco_containers,
+    docker.io/calico/node,
+    calico/node,
+    docker.io/cloudnativelabs/kube-router,
+    docker.io/docker/ucp-agent,
+    docker.io/mesosphere/mesos-slave,
+    docker.io/rook/toolbox,
+    docker.io/sysdig/sysdig,
+    gcr.io/google_containers/kube-proxy,
+    gcr.io/google-containers/startup-script,
+    gcr.io/projectcalico-org/node,
+    gke.gcr.io/kube-proxy,
+    gke.gcr.io/gke-metadata-server,
+    gke.gcr.io/netd-amd64,
+    gke.gcr.io/watcher-daemonset,
+    gcr.io/google-containers/prometheus-to-sd,
+    k8s.gcr.io/ip-masq-agent-amd64,
+    k8s.gcr.io/kube-proxy,
+    k8s.gcr.io/prometheus-to-sd,
+    quay.io/calico/node,
+    sysdig/sysdig,
+    sematext_images,
+    k8s.gcr.io/dns/k8s-dns-node-cache
+]
+
+- macro: trusted_images_query_miner_domain_dns
+  condition: (container.image.repository in (falco_containers))
+
+- macro: allowed_aws_ecr_registry_root_for_eks
+  condition: >
+    (container.image.repository startswith "602401143452.dkr.ecr" or
+    container.image.repository startswith "877085696533.dkr.ecr" or
+    container.image.repository startswith "800184023465.dkr.ecr" or
+    container.image.repository startswith "918309763551.dkr.ecr" or
+    container.image.repository startswith "961992271922.dkr.ecr" or
+    container.image.repository startswith "590381155156.dkr.ecr" or
+    container.image.repository startswith "558608220178.dkr.ecr" or
+    container.image.repository startswith "151742754352.dkr.ecr" or
+    container.image.repository startswith "013241004608.dkr.ecr")
+
+- list: trusted_images
+  items: []
+
+- macro: redhat_image
+  condition: >
+    (container.image.repository in (redhat_io_images_privileged))
+
+- macro: spawned_process
+  condition: (evt.type in (execve, execveat) and evt.dir=<)
+
+- macro: incomplete_image
+  condition: (container.image.repository = "" or not container.image.repository exists)
+
+- macro: aws_eks_core_images
+  condition: >
+    (allowed_aws_ecr_registry_root_for_eks and
+    (container.image.repository endswith ".amazonaws.com/amazon-k8s-cni" or
+    container.image.repository endswith ".amazonaws.com/eks/kube-proxy"))
+
+- macro: user_trusted_containers
+  condition: (never_true)
+
+- macro: allowed_openshift_registry_root
+  condition: >
+    (container.image.repository startswith openshift3/ or
+    container.image.repository startswith registry.redhat.io/openshift3/ or
+    container.image.repository startswith registry.access.redhat.com/openshift3/)
+
+- macro: falco_privileged_containers
+  condition: (openshift_image or
+              user_trusted_containers or
+              aws_eks_core_images or
+              container.image.repository in (trusted_images) or
+              container.image.repository in (falco_privileged_images) or
+              container.image.repository startswith istio/proxy_ or
+              container.image.repository startswith quay.io/sysdig/)
+
+- macro: container
+  condition: (container.id != host)
+
+- macro: interactive
+  condition: >
+    ((proc.aname=sshd and proc.name != sshd) or
+    proc.name=systemd-logind or proc.name=login)
+
+- macro: container_started
+  condition: >
+    ((evt.type = container or
+    (spawned_process and proc.vpid=1)) and
+    not incomplete_image)
+
+- macro: inbound_outbound
+  condition: >
+    ((((evt.type in (accept,listen,connect) and evt.dir=<)) and
+    (fd.typechar = 4 or fd.typechar = 6)) and
+    (fd.ip != "0.0.0.0" and fd.net != "127.0.0.0/8") and
+    (evt.rawres >= 0 or evt.res = EINPROGRESS))
+
+- macro: user_privileged_containers
+  condition: (container.privileged=true)
+
+- list: known_drop_and_execute_containers
+  items: []
+
+- rule: Network Connection outside Local Subnet
+  desc: Detect traffic to an IP outside RFC 1918 private subnets.
+  condition: >
+    inbound_outbound and
+    container and
+    not (
+      fd.rnet in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) or
+      fd.ip = "0.0.0.0" or
+      fd.net = "127.0.0.0/8"
+    ) and
+    k8s.ns.name in (namespace_scope_network_only_subnet)
+  enabled: false
+  output: >
+    Network connection outside local subnet
+    (command=%proc.cmdline pid=%proc.pid connection=%fd.name user=%user.name container_id=%container.id
+    image=%container.image.repository namespace=%k8s.ns.name)
+  priority: WARNING
+  tags: [container, network, mitre_discovery, PCI_DSS_6.4.2]
