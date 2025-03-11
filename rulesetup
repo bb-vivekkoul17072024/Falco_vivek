@@ -1,0 +1,14 @@
+You can setup the rules using helm command:
+
+helm upgrade --install falco-k8saudit-eks falcosecurity/falco \
+  --namespace falco \
+  --set falco.rules_file[0].name="falco_rules.yaml" \
+  --set falco.rules_file[0].path="/etc/falco/falco_rules.yaml" \
+  --set falco.rules_file[1].name="pci_ruleset.yaml" \
+  --set falco.rules_file[1].path="/etc/falco/pci_ruleset.yaml" \
+  --set-file customRules.pci_ruleset.yaml=/home/ubuntu/pci_ruleset.yaml
+
+Then you can convert the rule file to a configmap and volume mount it in ds configmap.
+
+then you can use this command to make changes to th configmap as needed:
+  kubectl create configmap falco-pci-rules --from-file=pci_ruleset.yaml -n falco --dry-run=client -o yaml | kubectl apply -f -
