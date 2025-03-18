@@ -1,0 +1,132 @@
+nist_rules.yaml: |-
+    - macro: authorized_server_port
+      condition: fd.sport in (80, 443, 22)  # Correct syntax for allowed ports
+
+    - macro: open_write
+      condition: (evt.type=open and evt.is_open_write=true)
+  
+    - macro: system_users
+      condition: (user.uid <= 1000)
+    - macro: interactive
+      condition: (evt.type in (execve, execveat))
+
+    - macro: container
+      condition: (evt.type in (execve, execveat) and container.id != host)
+    - macro: spawned_process
+      condition: (evt.type in (execve, execveat))
+
+    - macro: never_true
+      condition: (evt.num == 0)
+    - macro: inbound_outbound
+      condition: >
+        (evt.type in (accept, listen, connect) and evt.dir = <) and
+        (fd.typechar in (4, 6)) and
+        (fd.ip != "0.0.0.0" and not fd.net in ("127.0.0.0/8")) and
+        (evt.rawres >= 0 or evt.res = "EINPROGRESS")
+
+    - macro: user_known_system_user_login
+      condition: (never_true)
+
+    - list: authorized_server_binary
+      items: [nginx, httpd, mysqld, kubelet]
+
+    - macro: server_process
+      condition: proc.name in (authorized_server_binary)
+
+    - list: critical_log_files
+      items: [/var/log/syslog, /var/log/messages, /var/log/auth.log, /var/log/kube-apiserver.log]
+
+    - macro: access_log_files
+      condition: evt.arg.name in (critical_log_files)
+
+    - list: allowed_image
+      items: [myorg/nginx, myorg/app, k8s.gcr.io/pause]
+
+    - macro: trusted_container_images
+      condition: container.image.repository in (allowed_image)
+
+    - list: trusted_sa
+      items: [system:serviceaccount:kube-system:default, system:serviceaccount:kube-public:default]
+
+    - macro: trusted_service_accounts
+      condition: ka.user.name in (trusted_sa)
+
+
+    - list: allowed_namespaces
+      items: [kube-system, kube-public, default]
+
+    # By default, all containers are allowed to contact NodePort services.
+    - macro: nodeport_containers
+      condition: container
+
+    - macro: allowed_clear_log_files
+      condition: (never_true)
+
+    - macro: trusted_logging_images
+      condition: (container.image.repository endswith "splunk/fluentd-hec" or
+                  container.image.repository endswith "fluent/fluentd-kubernetes-daemonset" or
+                  container.image.repository endswith "openshift3/ose-logging-fluentd" or
+                  container.image.repository endswith "containernetworking/azure-npm")
+
+
+    - rule: System user interactive
+      desc: an attempt to run interactive commands by a system (i.e. non-login) user
+      condition: spawned_process and system_users and interactive and not user_known_system_user_login
+      output: "System user ran an interactive command (user=%user.name user_loginuid=%user.loginuid)"
+      priority: INFO
+      tags: [host, container, users, mitre_execution, T1059, NIST_800-53_AC-2]
+
+    - rule: Unexpected K8s NodePort Connection
+      desc: Detect attempts to use K8s NodePorts from a container
+      condition: >
+        (evt.type in (accept, connect)) and evt.dir=< and
+        fd.sport >= 30000 and fd.sport <= 32767 and
+        container and not nodeport_containers
+      output: Unexpected K8s NodePort Connection (command=%proc.cmdline pid=%proc.pid connection=%fd.name container_id=%container.id image=%container.image.repository)
+      priority: NOTICE
+      tags: [network, k8s, container, mitre_persistence, T1205.001, NIST_800-53_AC-6]
+
+    - rule: CloudTrail Logging Disabled
+      desc: The CloudTrail audit logging has been disabled, this could be potentially malicious.
+      condition:
+        ct.name="StopLogging" and not ct.error exists
+      output:
+        The CloudTrail logging has been disabled.
+        (requesting user=%ct.user,
+        requesting IP=%ct.srcip,
+        AWS region=%ct.region,
+        resource name=%ct.request.name)
+      priority: WARNING 
+      tags: [cloud, aws, aws_cloudtrail, NIST_800-53_AU-9]
+      source: aws_cloudtrail
+
+    - rule: Clear Log Activities
+      desc: Detect clearing of critical log files
+      condition: >
+        open_write and
+        access_log_files and
+        evt.arg.flags contains "O_TRUNC" and
+        not trusted_logging_images and
+        not allowed_clear_log_files
+      output: >
+        Log files were tampered (user=%user.name user_loginuid=%user.loginuid command=%proc.cmdline)
+      priority: WARNING
+      tags: [host, container, filesystem, mitre_defense_evasion, NIST_800-53_AU-10]
+
+    - rule: Outbound or Inbound Traffic not to Authorized Server Process and Port
+      desc: Detects traffic that is not to the authorized server process and port.
+      condition: >
+        inbound_outbound and
+        container and
+        container.image.repository in (allowed_image) and
+        not proc.name in (authorized_server_binary) and
+        not authorized_server_port
+      enabled: false 
+      output: >
+        Network connection outside authorized port and binary
+        (command=%proc.cmdline pid=%proc.pid connection=%fd.name user=%user.name user_loginuid=%user.loginuid container_id=%container.id
+        image=%container.image.repository)
+      priority: WARNING
+      tags: [container, network, mitre_discovery, TA0011, NIST_800-53_CM-7]
+
+
